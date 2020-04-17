@@ -7,7 +7,38 @@
 #include "esp_system.h"
 #include "RC522.h"
 
+#define RC522_SCLK_freq 10000  // SPI Clock Freq (Hz)
+#define RC522_SCLK_interrupt_counter (1000000/RC522_SCLK_freq)/2
 
+/* 
+  Use a timer module in the MCU to make our own SPI master system for the RC522
+  Additional variables to indicate various states regarding the timer
+*/
+hw_timer_t *timer = NULL;
+volatile byte RC522_SCLK_state = 0;
+volatile byte rising_RC522_SCLK_edge = 0;
+volatile byte falling_RC522_SCLK_edge = 0;
+volatile byte RC522_SCLK_en = 0;
+
+
+
+/*
+  Interrupt routine for RC522 SPI timer 
+*/
+void IRAM_ATTR intRoutine() {
+  // SPI Clock runs at fixed frequency given by RC522_SCLK_freq when enabled, else 0
+  RC522_SCLK_state = (RC522_SCLK_en) ? !RC522_SCLK_state : 0; 
+  digitalWrite(RC522_SCLK, RC522_SCLK_state);
+
+  // Sets rising_RC522_SCLK_edge on rising edge, up to functions to use and reset this
+  rising_RC522_SCLK_edge = RC522_SCLK_state;   
+  // sets falling_RC522_SCLK_edge on falling edge, up to functions to use and reset this
+  falling_RC522_SCLK_edge = !RC522_SCLK_state; 
+}
+
+/*
+  Send one byte with SPI
+*/
 void writeByte(byte val) {                // should always begin just after falling edge
   int i = 7;
   digitalWrite(RC522_MOSI, (val & 1<<i) != 0);  // write bit i
@@ -24,15 +55,18 @@ void writeByte(byte val) {                // should always begin just after fall
   while (!falling_RC522_SCLK_edge)  {}            
 }
 
+/*
+  Read one byte with SPI
+*/
 byte readByte() {                          // should always begin just after falling edge
   byte val = 0;
   int i = 7;
   rising_RC522_SCLK_edge = 0;
 
   while (i >= 0) {
-    while (!rising_RC522_SCLK_edge) {}
+    while (!rising_RC522_SCLK_edge) {}            // read on rising edge
     rising_RC522_SCLK_edge = 0;
-    int reading = digitalRead(RC522_MISO);
+    int reading = digitalRead(RC522_MISO);        // read bit i
     val |= reading<<i;
     i--;
   }
@@ -41,6 +75,9 @@ byte readByte() {                          // should always begin just after fal
   return val;
 }
 
+/*
+  Write a byte and reads a byte simultaneously with SPI
+*/
 byte transferByte(byte writeVal) {         // should always begin just after falling edge
   byte readVal = 0;
   int read_index = 7;
@@ -48,22 +85,22 @@ byte transferByte(byte writeVal) {         // should always begin just after fal
   rising_RC522_SCLK_edge = 0;
   falling_RC522_SCLK_edge = 0;
 
-  // write fiRC522_RST bit immediately as we're just after falling edge
+  // write first bit immediately as we're just after falling edge
   digitalWrite(RC522_MOSI, (writeVal & 1 << write_index) != 0);
   write_index--;
 
   // read and write seven times (seven rising and falling edges)
   while (write_index >= 0)
   {
-    while (!rising_RC522_SCLK_edge) {}
+    while (!rising_RC522_SCLK_edge) {}             // read bit on rising edge
     rising_RC522_SCLK_edge = 0;
-    byte reading = digitalRead(RC522_MISO);
+    byte reading = digitalRead(RC522_MISO);        // read bit i
     readVal |= reading << read_index;
     read_index--;
 
-    while (!falling_RC522_SCLK_edge) {}
+    while (!falling_RC522_SCLK_edge) {}            // write bit on falling edge
     falling_RC522_SCLK_edge = 0;
-    digitalWrite(RC522_MOSI, (writeVal & 1 << write_index) != 0);
+    digitalWrite(RC522_MOSI, (writeVal & 1 << write_index) != 0);  // write bit i 
     write_index--;
   }
 
@@ -81,63 +118,107 @@ byte transferByte(byte writeVal) {         // should always begin just after fal
   return readVal;
 }
 
+/*
+  Write a byte to a register of the RC522
+*/
 void RC522_writeReg(byte address, byte val) {
+  // Enable and reset timer to turn on SPI clock
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
+
+  // Write address byte
   digitalWrite(RC522_SS, LOW);
   writeByte((address << 1) & B01111110);   // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
   writeByte(val);
   digitalWrite(RC522_SS, HIGH);
+
+  // Disable timer to turn off SPI clock
   RC522_SCLK_en = 0;
+  // Leave chip select high for at least 100us
   delayMicroseconds(100);
 }
 
+/*
+  Read a byte from a register of the RC522
+*/
 byte RC522_readReg(byte address) {
+  // Enable and reset timer to turn on SPI clock
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
+
+  // Write address byte
   digitalWrite(RC522_SS, LOW);
   writeByte(((address << 1) | B10000000) & B11111110); // MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
+  // Read data byte
   byte val = readByte();
   digitalWrite(RC522_SS, HIGH);
+
+  // Disable timer to turn off SPI clock
   RC522_SCLK_en = 0;
+  // Leave chip select high for at least 100us
   delayMicroseconds(100);
+
   return val;
 }
 
+/*
+  Write to a register of the RC522 multiple times (usually writing to the FIFO buffer)
+*/
 void RC522_writeRegs(byte address, int count, byte *values) {
+  // Enable and reset timer to turn on SPI clock
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
+
+  // Write address byte once
   digitalWrite(RC522_SS, LOW);
   writeByte((address <<1 ) & B01111110); // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
+  // Write data bytes sequentially (don't need to send address anymore)
   for (int i = 0; i < count; i++) {
     writeByte(values[i]);
   }
   digitalWrite(RC522_SS, HIGH);
+  
+  // Disable timer to turn off SPI clock
   RC522_SCLK_en = 0;
+  // Leave chip select high for at least 100us
   delayMicroseconds(100);
 }
 
+/*
+  Read a register of the RC522 multiple times (usually reading from the FIFO buffer)
+*/
 void RC522_readRegs(byte address, int count, byte *values, byte rxAlign) {
+  // Enable and reset timer to turn on SPI clock
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
+
+  // Write address byte once
   digitalWrite(RC522_SS, LOW);              
   count--;
   writeByte(((address << 1) | B10000000) & B11111110); // Send address, MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
+  // Write address byte n-1 more times while reading returned byte each time
   for (int i = 0; i < count; i++) {
+    // rxAlign means we only care about certain digits on the first byte
     if (i == 0 && rxAlign) {
       byte mask = (B11111111 << rxAlign) & B11111111;
       byte val = transferByte(((address << 1) | B10000000) & B11111110);
       values[0] = (values[0] & ~mask) | (val & mask); 
     }
     else
-      values[i] = transferByte(((address << 1) | B10000000) & B11111110); // Read n-1 bytes while sending same address each time
+      values[i] = transferByte(((address << 1) | B10000000) & B11111110); 
   }
-  values[count] = readByte();          // read nth byte while we sdon't care what to send on last byte
+  // Read final (nth) byte. Don't care what to send on last byte
+  values[count] = readByte();          
   digitalWrite(RC522_SS, HIGH);
+  // Disable timer to turn off SPI clock
   RC522_SCLK_en = 0;
+  // Leave chip select high for at least 100us
   delayMicroseconds(100);
 }
 
+/*
+  Performs a soft reset of the RC522 module (Documentation 9.3.1.2 & 10.3.1.10)
+*/
 void RC522_softReset() {
   RC522_writeReg(CommandReg, RC522_SoftReset);
   do 
@@ -145,42 +226,13 @@ void RC522_softReset() {
   while (RC522_readReg(CommandReg) & (1 << 4)); // Loop until bit 4 is reset
 }
 
-void RC522_selfTest() {
-  // Documentation 16.1.1
-
-  // 1. Soft Reset
-  RC522_softReset();
-
-  // 2. Clear internal buffer: write 25 bytes of 0x0 and implement config command
-  byte zeros[25] = {0x0};
-  RC522_writeReg(FIFOLevelReg, B10000000);   // Clearing FIFO by setting FlushBuffer bit 7
-  RC522_writeRegs(FIFODataReg, 25, zeros);   // Write 25 bytes of 0x0 to FIFO
-  RC522_writeReg(CommandReg, RC522_Mem);      // Store 25 bytes from FIFO to internal buffer (Documentation 10.3.1.2)
-
-  // 3. Enable self test
-  RC522_writeReg(AutoTestReg, B00001001);
-
-  // 4. Write 0x0 to FIFO buffer
-  RC522_writeReg(FIFODataReg, 0);
-
-  // 5. Start self test with CalcCRC Command
-  RC522_writeReg(CommandReg, RC522_CalcCRC);
-  delay(500);
-  // 6. Wait until self test is complete
-  while (RC522_readReg(FIFOLevelReg) < 63) {} // Check how many bytes are in FIFO buffer
-  RC522_writeReg(CommandReg, RC522_Idle);
-
-  // 7. Read FIFO buffer bytes
-  byte result[64];
-  for (int i = 0; i <64; i++)
-    RC522_readReg(i);
-  RC522_readRegs(FIFODataReg, 64, result, 0); 
-  for (int i = 0; i < 64; i++)
-    Serial.println(result[i]);
-}
-
+/*
+  Intialize RC522 module.
+  This is referenced from the linked github library as there
+  is no recommended intialization sequence within the documentation
+*/
 void RC522_init() {
-  // RFID Reader
+  // Configure digital pints
   pinMode(RC522_RST, OUTPUT);
   pinMode(RC522_IRQ, INPUT);
   pinMode(RC522_MISO, INPUT);
@@ -191,19 +243,21 @@ void RC522_init() {
   digitalWrite(RC522_RST, HIGH);    // Active High enabled, reset on low
   digitalWrite(RC522_MOSI, LOW);
   digitalWrite(RC522_SCLK, LOW);
-  digitalWrite(RC522_SS, HIGH);    // Active Low Chip Select
-  // RFID reader software SPI timer init
+  digitalWrite(RC522_SS, HIGH);     // Active Low Chip Select
+
+  // Intialize custom software SPI timer
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &intRoutine, true);
   timerAlarmWrite(timer, RC522_SCLK_interrupt_counter, true);
   timerAlarmEnable(timer);
 
-  // reset timer states
+  // Reset timer states
   RC522_SCLK_state = 0;
   rising_RC522_SCLK_edge = 0;
   falling_RC522_SCLK_edge = 0;
   RC522_SCLK_en = 0; 
-  // hard reset
+  
+  // Hard reset of RC522 
   digitalWrite(RC522_RST, LOW);
   delay(1);
   digitalWrite(RC522_RST, HIGH);
@@ -231,6 +285,11 @@ void RC522_init() {
   RC522_writeReg(TxControlReg, val | B00000011); // Setting Tx2RFEn and Tx1RFEn
 }
 
+/*
+  Check if a card is in range of the RC522 antenna.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 bool RC522_isNewCardPresent() {
   byte bufferATQA[2];                    // buffer to store answer to request
   byte bufferSize = sizeof(bufferATQA);
@@ -245,10 +304,20 @@ bool RC522_isNewCardPresent() {
   return (result == STATUS_OK || result == STATUS_COLLISION);
 }
 
+/*
+  Send a PICC_RequestA.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 StatusCode PICC_RequestA(byte *bufferATQA, byte *bufferSize) {
   return PICC_REQA_or_WUPA(PICC_CMD_REQA, bufferATQA, bufferSize);
 }
 
+/*
+  Configure and send a PICC_RequestA or WUPA.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 StatusCode PICC_REQA_or_WUPA(byte command, byte *bufferATQA, byte *bufferSize) {
   byte validBits;
   StatusCode status;
@@ -272,6 +341,11 @@ StatusCode PICC_REQA_or_WUPA(byte command, byte *bufferATQA, byte *bufferSize) {
   return STATUS_OK;
 }
 
+/*
+  Configure and send a signal to the RFID card.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 StatusCode RC522_TransceiveData(	
                           byte *sendData,		
                           // Pointer to the data to transfer to the FIFO.
@@ -286,6 +360,11 @@ StatusCode RC522_TransceiveData(
   return RC522_CommunicateWithPICC(RC522_Transceive, waitRC522_IRQ, sendData, sendLen, backData, backLen, validBits, rxAlign, checkCRC);
 }
 
+/*
+  Communicate directly with the RFID card. This is used by many higher level functions.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 StatusCode RC522_CommunicateWithPICC(	
                             byte command,		 // The command to execute. One of the PCD_Command enums.
 														byte waitRC522_IRQ,		 // The bits in the ComRC522_IRQReg register that signals succeRC522_SSful completion of the command.
@@ -370,6 +449,11 @@ StatusCode RC522_CommunicateWithPICC(
   return STATUS_OK;
 }
 
+/*
+  Obtain the 32-bit unique-ID of the RFID card.
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.
+*/
 bool PICC_getUID(byte *uid_bytes) {
   byte validBits = 0;
   bool uidComplete;
@@ -518,6 +602,11 @@ bool PICC_getUID(byte *uid_bytes) {
   return false;
 }
 
+/*
+  Determine the CRC (Cyclic redundancy check).
+  This is referenced from the linked github library as there
+  is no recommended sequence within the documentation.  
+*/
 StatusCode RC522_CalculateCRC(byte *data, byte length, byte *result) {
   RC522_writeReg(CommandReg, RC522_Idle);      // Stop current command
   RC522_writeReg(DivIrqReg, B00000100);       // Reset CRCRC522_IRQ interrupt request bit

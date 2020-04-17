@@ -24,6 +24,7 @@ extern const int LCD_spiClk;
 extern SPIClass *LCD_SPI;
 extern SPISettings *LCD_SPISettings;
 
+// Bytes corresponding to a hex char (five bytes wide)
 const char LCD_hexChars[][5] = {
 {0x3e, 0x51, 0x49, 0x45, 0x3e}  // 0
 ,{0x00, 0x42, 0x7f, 0x40, 0x00} // 1

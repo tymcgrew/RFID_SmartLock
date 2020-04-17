@@ -1,5 +1,13 @@
+/*
+  Functions for connecting to WiFi and uploading info to google doc
+  HTTP Example: https://github.com/espressif/arduino-esp32/blob/master/libraries/HTTPClient/examples/BasicHttpClient/BasicHttpClient.ino
+*/
+
 #include "Upload.h"
 
+/*
+  Certificate for HTTPS
+*/
 const char* root_ca  =\
 "-----BEGIN CERTIFICATE-----\n"\
 "MIIEkjCCA3qgAwIBAgIQCgFBQgAAAVOFc2oLheynCDANBgkqhkiG9w0BAQsFADA/\n"\
@@ -29,26 +37,39 @@ const char* root_ca  =\
 "KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==\n"\
 "-----END CERTIFICATE-----\n";
 
+/*
+  Two sets of SSIDs and passwords for use in two locations
+*/
 const char* ssid = "****";
 const char* password = "****";
 const char* ssid2 = "****";
 const char* password2 = "****";
 
+/*
+  More network info
+*/
 const char *GScriptID = "AKfycbzYPSzUWES48WMIpE4-Hn_WeyyYr9WWoTXwO7ySPs8gAfrP-UNJ";
-const int httpsPort = 443;
+const int httpsPort = 443;   // default HTTPS port
 const char* host = "script.google.com";
+// Format URL
 String url = String("/macros/s/") + GScriptID + "/exec?";
 WiFiClientSecure client;
 
+/*
+  Attempt to establish wifi connection
+*/
 bool WiFi_init() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+
+  // Try for 5 seconds to connect to first network
   long startTime = millis();
   while ((WiFi.status() != WL_CONNECTED) && ((millis() - startTime) < 5000)) {
     Serial.print(".");
     delay(500);    
   }
 
+  // Try for 5 seconds to connect to second network if not connected to the first
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.begin(ssid2, password2);
     long startTime = millis();
@@ -58,6 +79,7 @@ bool WiFi_init() {
     }
   }
 
+  // Return false if neither connected
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
@@ -66,9 +88,9 @@ bool WiFi_init() {
   Serial.println("\nWiFi connected");
   Serial.println(WiFi.localIP());
 
+  // Connect to host
   Serial.print(String("Connecting to "));
   Serial.println(host);
-
   bool WiFiFlag = false;
   for (int i = 0 ; i < 5; i++) {
     int retval = client.connect(host, httpsPort);
@@ -80,10 +102,10 @@ bool WiFi_init() {
       Serial.println("Connection failed. Retrying...");
     }
   }
-
   Serial.println("Connection Status: " + String(client.connected()));
   Serial.flush();
 
+  // If couldn't connect to host (no internet or google down), return false
   if (!WiFiFlag) {
     Serial.print("Could not connect to server: ");
     Serial.println(host);
@@ -92,17 +114,26 @@ bool WiFi_init() {
     return false;
   }
 
+  // Everything is online
   return true;
 }
 
+/*
+  Post data through HTTPS
+*/
 void postData(String UID_string, String is_valid) {
   HTTPClient http;
 
+  // Format URL with data
   String urlFinal = String("https://") + host + url + "id=" + "Data" + "&UID=" + UID_string + "&Valid=" + String(is_valid);
   Serial.println(urlFinal);
   Serial.println("Making a request");
+
+  // Send HTTP get request
   http.begin(urlFinal, root_ca);
   int httpCode = http.GET();
   http.end();
+
+  // Debug payload
   Serial.println(": done"+httpCode);
 }

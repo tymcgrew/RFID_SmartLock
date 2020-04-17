@@ -1,6 +1,7 @@
 /*
   Tyler McGrew
   RC522 RFID reader implementation on ESP-32 with LCD display and peripherals
+  https://github.com/tymcgrew/RFID_SmartLock
 */
 
 #include <Arduino.h>
@@ -10,31 +11,24 @@
 #include <SPI.h>
 #include "Upload.h"
 
+/*
+  Defining a few pins
+*/
 #define speaker 26
 #define motorA 2
 #define motorB 4
 
-hw_timer_t *timer = NULL;
-volatile byte RC522_SCLK_state = 0;
-volatile byte rising_RC522_SCLK_edge = 0;
-volatile byte falling_RC522_SCLK_edge = 0;
-volatile byte RC522_SCLK_en = 0;
-
-const int LCD_spiClk = 1000000;
-SPIClass *LCD_SPI;
-SPISettings *LCD_SPISettings;
-
+/*
+  Is the WiFi connected?
+*/
 bool online = false;
 
 
-void IRAM_ATTR intRoutine() {
-  RC522_SCLK_state = (RC522_SCLK_en) ? !RC522_SCLK_state : 0; // SPI Clock runs at fixed frequency given by RC522_SCLK_freq when enabled, else 0
-  digitalWrite(RC522_SCLK, RC522_SCLK_state);
-  rising_RC522_SCLK_edge = RC522_SCLK_state;   // Sets rising_RC522_SCLK_edge on rising edge, up to functions to use and reset this
-  falling_RC522_SCLK_edge = !RC522_SCLK_state; // sets falling_RC522_SCLK_edge on falling edge, up to functions to use and reset this
-}
-
+/*
+  Plays two short, high-pitched beeps on the speaker
+*/
 void welcomeTone() {
+  // Triangle wave form /\/\/\/\/\/\ at a fairly high frequency, not sure the exact pitch
   for (int repeats = 0; repeats < 500; repeats++) {
     for (int i = 0; i < 256; i+=20) {
       dacWrite(speaker, i);  
@@ -43,7 +37,11 @@ void welcomeTone() {
       dacWrite(speaker, i);
     }
   }
+
+  // Wait a bit
   delay(50);
+
+  // Second beep, same as the first
   for (int repeats = 0; repeats < 500; repeats++) {
     for (int i = 0; i < 256; i+=20) {
       dacWrite(speaker, i);  
@@ -54,7 +52,11 @@ void welcomeTone() {
   }
 }
 
+/*
+  Plays a longer, low-pitches tone on the speaker
+*/
 void invalidTone() {
+  // Triangle wave form /\/\/\/\/\/\ at a lower frequency, not sure the exact pitch
   for (int repeats = 0; repeats < 200; repeats++) {
     for (int i = 0; i < 256; i+=1) {
       dacWrite(speaker, i); 
@@ -63,6 +65,9 @@ void invalidTone() {
   }
 }
 
+/*
+  Turns a DC motor (H-Bridge configuration) back and forth to simulate opening and closing a lock
+*/
 void openLock() {
   digitalWrite(motorA, HIGH);
   digitalWrite(motorB, LOW);
@@ -83,19 +88,24 @@ void openLock() {
 void setup() {
   Serial.begin(9600);
 
+  // Intialize motor outputs
   pinMode(motorA, OUTPUT);
   pinMode(motorB, OUTPUT);
   digitalWrite(motorA, LOW);
   digitalWrite(motorB, LOW);
 
   delay(1000);
+
+  // Intiazlize LCD
   LCD_init();
+  // Initialize RFID Reader
   RC522_init();
+  // Check if WiFi is available and connect if so 
   online = WiFi_init();
 }
 
 void loop() {
-  // Default screen: screen-saver
+  // Default screen: screen-saver aat 10Hz
   LCD_screenSaver();
   delay(100);
 
@@ -120,22 +130,27 @@ void loop() {
 
   // Check if UID is authorized
   if (uid == 0x14FF5B2B) {
+    // Put the welcome screen on the LCD
     LCD_welcome(uid);
+    // Play welcome tone
     welcomeTone();
+    // Turn lock motor
     openLock();
+    // Post data to google doc if system is online
     if (online)
       postData(String(hex_string), "YES");
     else
       delay(2000); 
   }
   else {
+    // Put the invalid ID screen on the LCD
     LCD_invalid(uid);
+    // Play the invalid tone
     invalidTone();
+    // Post data to google doc if system is online
     if (online)
       postData(String(hex_string), "NO");
     else
       delay(2000);
   }
-
-  
 }
