@@ -24,6 +24,8 @@ const int LCD_spiClk = 1000000;
 SPIClass *LCD_SPI;
 SPISettings *LCD_SPISettings;
 
+bool online = false;
+
 
 void IRAM_ATTR intRoutine() {
   RC522_SCLK_state = (RC522_SCLK_en) ? !RC522_SCLK_state : 0; // SPI Clock runs at fixed frequency given by RC522_SCLK_freq when enabled, else 0
@@ -89,7 +91,7 @@ void setup() {
   delay(1000);
   LCD_init();
   RC522_init();
-  WiFi_init();
+  online = WiFi_init();
 }
 
 void loop() {
@@ -121,12 +123,18 @@ void loop() {
     LCD_welcome(uid);
     welcomeTone();
     openLock();
-    postData(String(hex_string), "YES");
+    if (online)
+      postData(String(hex_string), "YES");
+    else
+      delay(2000); 
   }
   else {
     LCD_invalid(uid);
     invalidTone();
-    postData(String(hex_string), "NO");
+    if (online)
+      postData(String(hex_string), "NO");
+    else
+      delay(2000);
   }
 
   

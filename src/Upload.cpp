@@ -29,8 +29,10 @@ const char* root_ca  =\
 "KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==\n"\
 "-----END CERTIFICATE-----\n";
 
-const char* ssid = *****;
-const char* password = *****;
+const char* ssid = "****";
+const char* password = "****";
+const char* ssid2 = "****";
+const char* password2 = "****";
 
 const char *GScriptID = "AKfycbzYPSzUWES48WMIpE4-Hn_WeyyYr9WWoTXwO7ySPs8gAfrP-UNJ";
 const int httpsPort = 443;
@@ -38,13 +40,29 @@ const char* host = "script.google.com";
 String url = String("/macros/s/") + GScriptID + "/exec?";
 WiFiClientSecure client;
 
-void WiFi_init() {
+bool WiFi_init() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  long startTime = millis();
+  while ((WiFi.status() != WL_CONNECTED) && ((millis() - startTime) < 5000)) {
     Serial.print(".");
     delay(500);    
   }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(ssid2, password2);
+    long startTime = millis();
+    while ((WiFi.status() != WL_CONNECTED) && ((millis() - startTime) < 5000)) {
+      Serial.print(".");
+      delay(500);    
+    }
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+    
+
   Serial.println("\nWiFi connected");
   Serial.println(WiFi.localIP());
 
@@ -71,8 +89,10 @@ void WiFi_init() {
     Serial.println(host);
     Serial.println("Exiting...");
     Serial.flush();
-    return;
+    return false;
   }
+
+  return true;
 }
 
 void postData(String UID_string, String is_valid) {
