@@ -81,22 +81,22 @@ byte transferByte(byte writeVal) {         // should always begin just after fal
   return readVal;
 }
 
-void RC522_writeReg(byte addreRC522_SS, byte val) {
+void RC522_writeReg(byte address, byte val) {
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
   digitalWrite(RC522_SS, LOW);
-  writeByte((addreRC522_SS << 1) & B01111110);   // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
+  writeByte((address << 1) & B01111110);   // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
   writeByte(val);
   digitalWrite(RC522_SS, HIGH);
   RC522_SCLK_en = 0;
   delayMicroseconds(100);
 }
 
-byte RC522_readReg(byte addreRC522_SS) {
+byte RC522_readReg(byte address) {
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
   digitalWrite(RC522_SS, LOW);
-  writeByte(((addreRC522_SS << 1) | B10000000) & B11111110); // MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
+  writeByte(((address << 1) | B10000000) & B11111110); // MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
   byte val = readByte();
   digitalWrite(RC522_SS, HIGH);
   RC522_SCLK_en = 0;
@@ -104,11 +104,11 @@ byte RC522_readReg(byte addreRC522_SS) {
   return val;
 }
 
-void RC522_writeRegs(byte addreRC522_SS, int count, byte *values) {
+void RC522_writeRegs(byte address, int count, byte *values) {
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
   digitalWrite(RC522_SS, LOW);
-  writeByte((addreRC522_SS <<1 ) & B01111110); // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
+  writeByte((address <<1 ) & B01111110); // MSB is 0 for writing, LSB is 0 (Documentation 8.1.2.3)
   for (int i = 0; i < count; i++) {
     writeByte(values[i]);
   }
@@ -117,20 +117,20 @@ void RC522_writeRegs(byte addreRC522_SS, int count, byte *values) {
   delayMicroseconds(100);
 }
 
-void RC522_readRegs(byte addreRC522_SS, int count, byte *values, byte rxAlign) {
+void RC522_readRegs(byte address, int count, byte *values, byte rxAlign) {
   timerWrite(timer, 0);
   RC522_SCLK_en = 1;
   digitalWrite(RC522_SS, LOW);              
   count--;
-  writeByte(((addreRC522_SS << 1) | B10000000) & B11111110); // Send addreRC522_SS, MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
+  writeByte(((address << 1) | B10000000) & B11111110); // Send address, MSB is 1 for reading, LSB is 0 (Documentation 8.1.2.3)
   for (int i = 0; i < count; i++) {
     if (i == 0 && rxAlign) {
       byte mask = (B11111111 << rxAlign) & B11111111;
-      byte val = transferByte(((addreRC522_SS << 1) | B10000000) & B11111110);
+      byte val = transferByte(((address << 1) | B10000000) & B11111110);
       values[0] = (values[0] & ~mask) | (val & mask); 
     }
     else
-      values[i] = transferByte(((addreRC522_SS << 1) | B10000000) & B11111110); // Read n-1 bytes while sending same addreRC522_SS each time
+      values[i] = transferByte(((address << 1) | B10000000) & B11111110); // Read n-1 bytes while sending same address each time
   }
   values[count] = readByte();          // read nth byte while we sdon't care what to send on last byte
   digitalWrite(RC522_SS, HIGH);
